@@ -1,6 +1,8 @@
 import os
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "VIRA API"
@@ -32,6 +34,13 @@ class Settings(BaseSettings):
     @property
     def CELERY_RESULT_BACKEND(self) -> str:
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
+
+    # Gemini & Qdrant
+    GEMINI_API_KEY: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY")
+    GEMINI_MODEL: str = Field(default="gemini-2.5-flash", validation_alias="GEMINI_MODEL")
+    QDRANT_HOST: str = Field(default="localhost", validation_alias="QDRANT_HOST")
+    QDRANT_PORT: int = Field(default=6333, validation_alias="QDRANT_PORT")
+    QDRANT_IN_MEMORY: bool = Field(default=True, validation_alias="QDRANT_IN_MEMORY")
 
     model_config = SettingsConfigDict(
         env_file=".env",
