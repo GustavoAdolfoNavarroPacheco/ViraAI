@@ -11,6 +11,7 @@ from app.infrastructure.routers.data_routes import router as data_router
 from app.infrastructure.routers.rag_routes import router as rag_router
 from app.infrastructure.routers.agent_routes import router as agent_router
 from app.infrastructure.routers.ws_routes import router as ws_router
+from app.infrastructure.routers.oauth_routes import router as oauth_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -22,6 +23,7 @@ app.include_router(data_router, prefix=settings.API_V1_STR)
 app.include_router(rag_router, prefix=settings.API_V1_STR)
 app.include_router(agent_router, prefix=settings.API_V1_STR)
 app.include_router(ws_router, prefix=settings.API_V1_STR)
+app.include_router(oauth_router, prefix=settings.API_V1_STR)
 
 
 

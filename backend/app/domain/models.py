@@ -28,6 +28,7 @@ class Channel(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     auth_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     profile_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

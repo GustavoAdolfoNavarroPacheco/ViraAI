@@ -9,6 +9,7 @@ type(settings).SQLALCHEMY_DATABASE_URI = property(lambda self: "sqlite+aiosqlite
 from app.core.database import engine, Base, SessionLocal
 from app.domain.models import Channel, Post
 from app.application.tasks import publish_post_task
+from app.infrastructure.social_services import SocialService
 
 async def setup_test_db():
     async with engine.begin() as conn:
@@ -147,11 +148,108 @@ async def test_publish_post_task_retry_mechanism():
         
     print("-> test_publish_post_task_retry_mechanism: PASSED")
 
+async def test_publish_post_task_proactive_refresh():
+    print("Running test_publish_post_task_proactive_refresh...")
+    import datetime
+    async with SessionLocal() as db:
+        channel = Channel(
+            platform="linkedin",
+            name="VIRA LinkedIn Proactive Test",
+            auth_token="mock_expired_token",
+            refresh_token="mock_refresh_token_123",
+            token_expires_at=datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1),
+            is_active=True
+        )
+        db.add(channel)
+        await db.commit()
+        await db.refresh(channel)
+
+        post = Post(
+            channel_id=channel.id,
+            content="Testing proactive refresh in tasks",
+            status="draft"
+        )
+        db.add(post)
+        await db.commit()
+        await db.refresh(post)
+        
+        post_id = post.id
+        channel_id = channel.id
+
+    # Run task
+    result = publish_post_task.apply(args=[post_id])
+    assert result.status == "SUCCESS"
+    
+    # Assert that the database channel token was refreshed proactively
+    async with SessionLocal() as db:
+        updated_channel = await db.get(Channel, channel_id)
+        assert "refreshed" in updated_channel.auth_token
+        # Compare timezone aware datetimes
+        now = datetime.datetime.now(datetime.timezone.utc)
+        chan_expire = updated_channel.token_expires_at.replace(tzinfo=datetime.timezone.utc) if updated_channel.token_expires_at.tzinfo is None else updated_channel.token_expires_at
+        assert chan_expire > now
+        
+        updated_post = await db.get(Post, post_id)
+        assert updated_post.status == "published"
+    print("-> test_publish_post_task_proactive_refresh: PASSED")
+
+async def test_publish_post_task_reactive_refresh():
+    print("Running test_publish_post_task_reactive_refresh...")
+    import datetime
+    async with SessionLocal() as db:
+        channel = Channel(
+            platform="linkedin",
+            name="VIRA LinkedIn Reactive Test",
+            auth_token="mock_unauthorized_token",
+            refresh_token="mock_refresh_token_456",
+            token_expires_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1),
+            is_active=True
+        )
+        db.add(channel)
+        await db.commit()
+        await db.refresh(channel)
+
+        post = Post(
+            channel_id=channel.id,
+            content="Testing reactive 401 refresh in tasks",
+            status="draft"
+        )
+        db.add(post)
+        await db.commit()
+        await db.refresh(post)
+        
+        post_id = post.id
+        channel_id = channel.id
+
+    # We patch SocialService.publish_post to raise 401 error on the first token,
+    # and succeed if the token contains "refreshed"
+    original_publish = SocialService.publish_post
+    
+    def mock_publish(platform, access_token, content, media_url=None):
+        if "refreshed" not in access_token:
+            raise ValueError("HTTP Error 401: Unauthorized access token")
+        return original_publish(platform, access_token, content, media_url)
+        
+    with patch("app.infrastructure.social_services.SocialService.publish_post", side_effect=mock_publish):
+        result = publish_post_task.apply(args=[post_id])
+        assert result.status == "SUCCESS"
+
+    # Check that the channel was refreshed and the post published
+    async with SessionLocal() as db:
+        updated_channel = await db.get(Channel, channel_id)
+        assert "refreshed" in updated_channel.auth_token
+        
+        updated_post = await db.get(Post, post_id)
+        assert updated_post.status == "published"
+    print("-> test_publish_post_task_reactive_refresh: PASSED")
+
 async def run_all_tests():
     await setup_test_db()
     await test_publish_post_task_success()
     await test_publish_post_task_permanent_failure()
     await test_publish_post_task_retry_mechanism()
+    await test_publish_post_task_proactive_refresh()
+    await test_publish_post_task_reactive_refresh()
 
 if __name__ == "__main__":
     asyncio.run(run_all_tests())

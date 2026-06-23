@@ -6,6 +6,7 @@ from app.core.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.domain.models import Post, Channel
 from sqlalchemy.future import select
+from app.infrastructure.social_services import SocialService
 
 import threading
 
@@ -93,9 +94,64 @@ async def async_publish_post(task, post_id: int):
             if "trigger_fail" in post.content:
                 raise ValueError("Invalid credentials or permanent error (400)")
 
-            # Simulate network latency/API call
-            await asyncio.sleep(0.5)
-            
+            # Proactive token refresh check
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if channel.token_expires_at:
+                channel_expires_at = channel.token_expires_at
+                if channel_expires_at.tzinfo is None:
+                    # Convert naive datetime to timezone-aware UTC
+                    channel_expires_at = channel_expires_at.replace(tzinfo=datetime.timezone.utc)
+                
+                if channel_expires_at < now and channel.refresh_token:
+                    print(f"[Celery Task] Proactively refreshing token for channel {channel.name}...")
+                    try:
+                        refresh_data = SocialService.refresh_access_token(channel.platform, channel.refresh_token)
+                        channel.auth_token = refresh_data["access_token"]
+                        if refresh_data.get("refresh_token"):
+                            channel.refresh_token = refresh_data["refresh_token"]
+                        expires_in = refresh_data.get("expires_in", 3600)
+                        channel.token_expires_at = now + datetime.timedelta(seconds=expires_in)
+                        await db.commit()
+                        print(f"[Celery Task] Proactive refresh success.")
+                    except Exception as re:
+                        print(f"[Celery Task] Proactive refresh failed: {re}. Trying default token.")
+
+            # Attempt publish via SocialService
+            try:
+                publish_result = SocialService.publish_post(
+                    platform=channel.platform,
+                    access_token=channel.auth_token,
+                    content=post.content,
+                    media_url=post.media_url
+                )
+            except ValueError as ve:
+                err_msg = str(ve)
+                # If error is 401 Unauthorized, reactively refresh token and retry
+                if "HTTP Error 401" in err_msg and channel.refresh_token:
+                    print(f"[Celery Task] Reactively refreshing token for channel {channel.name}...")
+                    try:
+                        refresh_data = SocialService.refresh_access_token(channel.platform, channel.refresh_token)
+                        channel.auth_token = refresh_data["access_token"]
+                        if refresh_data.get("refresh_token"):
+                            channel.refresh_token = refresh_data["refresh_token"]
+                        expires_in = refresh_data.get("expires_in", 3600)
+                        channel.token_expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=expires_in)
+                        await db.commit()
+                        
+                        # Retry publish
+                        print(f"[Celery Task] Token refreshed. Retrying publish...")
+                        publish_result = SocialService.publish_post(
+                            platform=channel.platform,
+                            access_token=channel.auth_token,
+                            content=post.content,
+                            media_url=post.media_url
+                        )
+                    except Exception as refresh_err:
+                        print(f"[Celery Task] Reactive refresh or retry failed: {refresh_err}")
+                        raise ValueError(f"Publish failed: {err_msg} and token refresh/retry failed: {refresh_err}")
+                else:
+                    raise
+
             # Update post status to published
             post.status = "published"
             post.published_at = datetime.datetime.now(datetime.timezone.utc)
@@ -106,7 +162,13 @@ async def async_publish_post(task, post_id: int):
             
             await db.commit()
             print(f"[Celery Task] Post {post_id} published successfully on {channel.platform}!")
-            return {"status": "success", "post_id": post_id, "platform": channel.platform}
+            return {
+                "status": "success", 
+                "post_id": post_id, 
+                "platform": channel.platform,
+                "external_post_id": publish_result.get("post_id"),
+                "external_url": publish_result.get("url")
+            }
             
         except Exception as e:
             # Check if this is a temporary failure and we can retry

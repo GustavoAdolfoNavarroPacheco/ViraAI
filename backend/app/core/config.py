@@ -42,6 +42,17 @@ class Settings(BaseSettings):
     QDRANT_PORT: int = Field(default=6333, validation_alias="QDRANT_PORT")
     QDRANT_IN_MEMORY: bool = Field(default=True, validation_alias="QDRANT_IN_MEMORY")
 
+    # Social APIs & OAuth 2.0
+    LINKEDIN_CLIENT_ID: Optional[str] = Field(default=None, validation_alias="LINKEDIN_CLIENT_ID")
+    LINKEDIN_CLIENT_SECRET: Optional[str] = Field(default=None, validation_alias="LINKEDIN_CLIENT_SECRET")
+    LINKEDIN_REDIRECT_URI: str = Field(default="http://localhost:8000/api/v1/channels/callback/linkedin", validation_alias="LINKEDIN_REDIRECT_URI")
+    
+    TWITTER_CLIENT_ID: Optional[str] = Field(default=None, validation_alias="TWITTER_CLIENT_ID")
+    TWITTER_CLIENT_SECRET: Optional[str] = Field(default=None, validation_alias="TWITTER_CLIENT_SECRET")
+    TWITTER_REDIRECT_URI: str = Field(default="http://localhost:8000/api/v1/channels/callback/twitter", validation_alias="TWITTER_REDIRECT_URI")
+    
+    FRONTEND_URL: str = Field(default="http://localhost:3000", validation_alias="FRONTEND_URL")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
